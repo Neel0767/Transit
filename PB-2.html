@@ -1,0 +1,1039 @@
+<html lang="en">
+<head>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bus Departure Times</title>
+	<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+	<link href="guelphtransit.css" rel="stylesheet" type="text/css">
+    <!-- protobuf.js is not used in the current schedule-based logic,
+         but kept in case real-time features are added later -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/protobufjs/6.11.2/protobuf.min.js"></script>
+</head>
+<body>
+    <div class="biggercontainer">
+        <!-- Header using existing CSS -->
+        <table class="table header-table">
+            <thead>
+                <tr class="HeaderBG">
+                    <td class="tdheader" style="width: 33%; vertical-align: middle; text-align: right; padding-right: 20px;">
+                        <div id="header-clock" style="color: white;">Loading...</div> <!-- Placeholder -->
+                    </td>
+                    <!-- ... other header cells if any ... -->
+                </tr>
+            </thead>
+        </table>
+
+        <div class="table-container">
+            <!-- Left Table -->
+            <div class="table-half">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Route</th>
+                            <th colspan="3">Departure</th> <!-- Spanning 3 columns for past + 3 future -->
+                        </tr>
+                    </thead>
+                    <tbody id="departureTable">
+                        <!-- Rows will be inserted here -->
+                        <tr><td colspan="4">Loading schedule...</td></tr> <!-- Initial placeholder -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Right Table -->
+            <div class="table-half">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Route</th>
+                            <th colspan="3">Departure</th> <!-- Spanning 3 columns for past + 3 future -->
+                        </tr>
+                    </thead>
+                    <tbody id="departureTable-2">
+                        <!-- Rows will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+<script>
+// --- Configuration ---
+//"5847", "5834" "5836","5845"
+const stopIDs = ["5836","5845"]; // Stop IDs to display
+
+// --- Global Data Store ---
+const Data = {
+    stops: [],      // Will hold stop objects with route info and departures
+    serviceId: [],  // Will hold today's active service IDs
+    lastUpdateTime: "N/A" // Placeholder for last update time
+};
+
+const PLATFORM_COORDS = {
+    "5842": { lat: 43.528386, lon: -80.223368 },
+    "5843": { lat: 43.528565, lon: -80.223412 },
+    "5844": { lat: 43.528709, lon: -80.223459 },
+    "5831": { lat: 43.528915, lon: -80.22357 },
+    "5845": { lat: 43.529045, lon: -80.223723 },
+    "5832": { lat: 43.529154, lon: -80.223879 },
+    "5840": { lat: 43.529272, lon: -80.224031 },
+    "5836": { lat: 43.529619, lon: -80.224547 },
+    "5846": { lat: 43.529735, lon: -80.224697 },
+    "5838": { lat: 43.529848, lon: -80.224868 },
+    "5834": { lat: 43.529975, lon: -80.22503 },
+    "5847": { lat: 43.530091, lon: -80.225189 },
+    "5848": { lat: 43.530208, lon: -80.225346 },
+    "6216": { lat: 43.529997, lon: -80.225904 }
+};
+
+// --- Utility Functions ---
+Data.now = () => {
+    const now = new Date();
+    // Update clock display (optional but good practice)
+    const clockElement = document.getElementById('header-clock');
+    if (clockElement) {
+        clockElement.textContent = now.toLocaleTimeString();
+    }
+    return now.toTimeString().split(' ')[0]; // HH:MM:SS for internal use if needed
+};
+
+
+//Function to format the last updated time
+function getFormattedLastUpdateTime() {
+    const now = new Date();
+    return now.toLocaleTimeString('en-US', { 
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    });
+}
+
+let lastUpdateTime = getFormattedLastUpdateTime();
+
+async function fetchVehiclePositions() {
+    const VEHICLE_POSITIONS_URL = "https://glphprdtmgtfs.glphtrpcloud.com/tmgtfsrealtimewebservice/vehicle/vehiclepositions.pb";
+    //console.log("Fetching Vehicle Positions...");
+    
+    try {
+        const response = await fetch(VEHICLE_POSITIONS_URL);
+        if (!response.ok) {
+            throw new Error(`Vehicle Positions fetch failed! Status: ${response.status}`);
+        }
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        // Load the .proto definition using a Promise
+        const root = await new Promise((resolve, reject) => {
+            protobuf.load("gtfs-realtime.proto", (err, root) => {
+                if (err) {
+                    console.error("Error loading .proto file:", err);
+                    reject(err);
+                } else {
+                    resolve(root);
+                }
+            });
+        });
+
+        const FeedMessage = root.lookupType("transit_realtime.FeedMessage");
+
+        // Decode and convert to object
+        const message = FeedMessage.decode(uint8Array);
+        const vehicleData = FeedMessage.toObject(message, {
+            longs: String,
+            enums: String, // Keep enums as strings (e.g., "IN_TRANSIT_TO")
+            bytes: String
+        });
+
+        // Create a map of tripId to vehicle position
+        const vehiclePositions = new Map();
+        if (vehicleData && vehicleData.entity) {
+            vehicleData.entity.forEach(entity => {
+                if (entity.vehicle && entity.vehicle.trip && entity.vehicle.position) {
+                    vehiclePositions.set(entity.vehicle.trip.tripId, {
+                        latitude: entity.vehicle.position.latitude,
+                        longitude: entity.vehicle.position.longitude
+                    });
+                }
+            });
+        }
+
+        return vehiclePositions;
+
+    } catch (error) {
+        console.error("Error fetching or parsing Vehicle Positions:", error);
+        return new Map(); // Return an empty map to indicate failure
+    }
+}
+
+async function fetchAndParsePB() {
+    try {
+        // Update the last update time
+        lastUpdateTime = getFormattedLastUpdateTime();
+        
+        // Fetch both trip updates and vehicle positions
+        const [tripResponse, vehiclePositions] = await Promise.all([
+            fetch("https://glphprdtmgtfs.glphtrpcloud.com/tmgtfsrealtimewebservice/tripupdate/tripupdates.pb"),
+            fetchVehiclePositions()
+        ]);
+
+        if (!tripResponse.ok) throw new Error(`HTTP error! Status: ${tripResponse.status}`);
+        const arrayBuffer = await tripResponse.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        
+        // Load the protobuf definition
+        const root = await new Promise((resolve, reject) => {
+            protobuf.load("gtfs-realtime.proto", (err, root) => {
+                if (err) {
+                    console.error("Error loading .proto file:", err);
+                    reject(err);
+                } else {
+                    resolve(root);
+                }
+            });
+        });
+
+        const FeedMessage = root.lookupType("transit_realtime.FeedMessage");
+        const message = FeedMessage.decode(uint8Array);
+        const allData = FeedMessage.toObject(message, { longs: String, enums: String, bytes: String });
+        
+        // Initialize realTime array for each stop
+        Data.stops.forEach(stop => {
+            stop.realTime = []; // Initialize the realTime array
+        });
+
+        // Filter data for stops in stopIDs array
+        if (allData && allData.entity) {
+            allData.entity.forEach(entity => {
+                if (entity.tripUpdate && entity.tripUpdate.stopTimeUpdate) {
+                    entity.tripUpdate.stopTimeUpdate.forEach(update => {
+                        if (stopIDs.includes(update.stopId)) {
+                            // Find the corresponding stop
+                            const stop = Data.stops.find(s => s.stopId === update.stopId);
+                            
+                            if (stop) {
+                                // Get vehicle position for this trip
+                                const position = vehiclePositions.get(entity.tripUpdate.trip.tripId);
+                                
+                                // Push the real-time data into the stop's realTime array
+                                stop.realTime.push({
+                                    stopId: update.stopId,
+                                    tripId: entity.tripUpdate.trip.tripId,
+                                    routeId: entity.tripUpdate.trip.routeId,
+                                    timeStamp: entity.tripUpdate.timestamp,
+                                    arrival: update.arrival ? {
+                                        time: update.arrival.time,
+                                    } : null,
+                                    departure: update.departure ? {
+                                        time: update.departure.time,
+                                    } : null,
+                                    vehicle: position ? {
+                                        position: position
+                                    } : null // Include vehicle position if available
+                                });
+                                console.log(stop,"===")
+                                // Check if the stop ID is "5834"
+                                if (stop.stopId === "5834") {
+                                    // Retrieve real-time data for "5847"
+                                    const interchangingStop = Data.stops.find(s => s.stopId === "5847");
+                                    if (interchangingStop) {
+                                        stop.trackingRealTime.push(interchangingStop.realTime);   
+                                    }
+                                }
+                                if (stop.stopId === "5847") {
+                                    // Retrieve real-time data for "5847"
+                                    const interchangingStop = Data.stops.find(s => s.stopId === "5834");
+                                    if (interchangingStop) {
+                                        stop.trackingRealTime.push(interchangingStop.realTime);   
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        // Check for interchanging buses
+
+    } catch (error) {
+        console.error("Error fetching PB file:", error);
+    }
+}
+// --- Data Loading Functions ---
+
+async function getTodaysServiceId() {
+    // ... (Keep the existing getTodaysServiceId function as is)
+    try {
+        const serviceIds = new Set(); // Using Set to avoid duplicates
+        const today = new Date();
+        const todayString = today.getFullYear().toString() +
+            String(today.getMonth() + 1).padStart(2, '0') +
+            String(today.getDate()).padStart(2, '0');
+
+        // Check calendar_dates.txt for exceptions
+        try {
+            const datesResponse = await fetch('calendar_dates.txt');
+            if (!datesResponse.ok) throw new Error(`HTTP error! status: ${datesResponse.status}`);
+            const datesText = await datesResponse.text();
+            const datesLines = datesText.split('\n');
+            for (let i = 1; i < datesLines.length; i++) {
+                const columns = datesLines[i].split(',');
+                 if (columns.length >= 3) {
+                    const serviceId = columns[0]?.trim();
+                    const date = columns[1]?.trim();
+                    const exceptionType = columns[2]?.trim();
+                    if (date === todayString) {
+                        if (exceptionType === '1') { // Service added
+                            serviceIds.add(serviceId);
+                        } else if (exceptionType === '2') { // Service removed
+                            // We'll handle removal after checking calendar.txt
+                            // For now, just note it - although adding first might be simpler.
+                            // Let's assume calendar.txt is base and dates.txt overrides.
+                            // Simplification: If added by exception, it runs. If removed, it doesn't.
+                            // Let's prioritize additions here, removals will be implicitly handled
+                            // if the ID isn't added later from calendar.txt.
+                             if (exceptionType === '1') serviceIds.add(serviceId);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+             console.warn('Could not fetch or parse calendar_dates.txt:', e);
+             // Continue without exceptions if file missing/error
+        }
+
+
+        // Check regular calendar.txt
+        try {
+            const response = await fetch('calendar.txt');
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const text = await response.text();
+            const lines = text.split('\n');
+            if (lines.length < 2) return Array.from(serviceIds); // Empty or header-only file
+
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+            const dayName = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][today.getDay()];
+            const dayIndex = headers.indexOf(dayName);
+
+            if (dayIndex === -1) {
+                console.error(`Could not find column for "${dayName}" in calendar.txt headers.`);
+                return Array.from(serviceIds); // Return any exceptions found
+            }
+
+            for (let i = 1; i < lines.length; i++) {
+                 const row = lines[i].split(',');
+                 if (row.length > dayIndex) {
+                     const serviceId = row[0]?.trim();
+                     const runsToday = row[dayIndex]?.trim();
+                     // Check if service runs today based on calendar.txt
+                     // AND if it hasn't been explicitly removed by calendar_dates.txt (though we didn't store removals yet)
+                     // Simplified logic: If calendar.txt says it runs, add it.
+                     // Exceptions already added will remain.
+                     if (runsToday === '1' && serviceId) {
+                         serviceIds.add(serviceId);
+                     }
+                 }
+            }
+             // Refined removal logic (Requires storing removals from dates.txt)
+             // This is complex. Let's stick to the simpler: if calendar says yes OR exception says yes.
+             // A more robust GTFS library handles this better.
+
+        } catch (e) {
+             console.warn('Could not fetch or parse calendar.txt:', e);
+             // Continue with any exceptions found
+        }
+
+        Data.serviceId = Array.from(serviceIds); // Store globally
+        //console.log('Today\'s active service IDs:', Data.serviceId);
+        return Data.serviceId;
+
+    } catch (error) {
+        console.error('Error determining today\'s service IDs:', error);
+        Data.serviceId = []; // Ensure it's an empty array on error
+        return [];
+    }
+}
+
+async function loadStopsData() {
+    // ... (Keep the existing loadStopsData function as is)
+     try {
+        const response = await fetch('stops.txt');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const text = await response.text();
+        const lines = text.split('\n');
+        const stops = {};
+        for (let i = 1; i < lines.length; i++) {
+            const columns = lines[i].split(',');
+             if (columns.length >= 3) {
+                 const stopId = columns[0]?.trim();
+                 const stopCode = columns[1]?.trim(); // Optional: Use if needed
+                 const stopName = columns[2]?.trim();
+                 if (stopId) {
+                    stops[stopId] = { stopCode, stopName };
+                 }
+            }
+        }
+        return stops;
+    } catch (error) {
+        console.error('Error loading stops data:', error);
+        return {};
+    }
+}
+
+async function loadRoutesData() {
+   // ... (Keep the existing loadRoutesData function as is)
+    try {
+        const response = await fetch('routes.txt');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const text = await response.text();
+        const lines = text.split('\n');
+        const routes = {};
+        for (let i = 1; i < lines.length; i++) {
+            const columns = lines[i].split(',');
+            if (columns.length >= 4) {
+                const routeId = columns[0]?.trim();
+                // const agencyId = columns[1]?.trim(); // Optional
+                const routeShortName = columns[2]?.trim();
+                const routeLongName = columns[3]?.trim();
+                 if (routeId) {
+                     routes[routeId] = { routeShortName, routeLongName };
+                 }
+            }
+        }
+        return routes;
+    } catch (error) {
+        console.error('Error loading routes data:', error);
+        return {};
+    }
+}
+
+async function loadTripsData() {
+    // **Modified** to store routeId and serviceId
+     try {
+        const response = await fetch('trips.txt');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const text = await response.text();
+        const lines = text.split('\n');
+        const trips = {}; // Key: tripId, Value: { routeId, serviceId }
+        for (let i = 1; i < lines.length; i++) {
+            const columns = lines[i].split(',');
+            if (columns.length >= 3) {
+                const routeId = columns[0]?.trim();
+                const serviceId = columns[1]?.trim();
+                const tripId = columns[2]?.trim();
+                if (tripId) {
+                    trips[tripId] = { routeId, serviceId };
+                }
+            }
+        }
+        return trips;
+    } catch (error) {
+        console.error('Error loading trips data:', error);
+        return {};
+    }
+}
+
+async function loadScheduleTimesData() {
+    // **Modified** to handle potential empty last column more gracefully
+     try {
+        const response = await fetch('schedule_times.txt');
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        const text = await response.text();
+        const lines = text.split('\n');
+        const scheduleTimes = [];
+        for (let i = 1; i < lines.length; i++) {
+             // Split carefully, preserving empty values at the end
+             const columns = lines[i].split(',');
+             if (columns.length >= 5) { // Need at least up to stopSequence
+                 const tripId = columns[0]?.trim();
+                 // const arrivalTime = columns[1]?.trim(); // Optional
+                 const departureTime = columns[2]?.trim();
+                 const stopId = columns[3]?.trim();
+                 const stopSequence = columns[4]?.trim();
+                 // shape_dist_traveled might be missing or empty
+                 const shapeDistTraveled = columns[8]?.trim() || ''; // Assuming it's the 9th column (index 8) based on example
+
+                 if (tripId && departureTime && stopId && stopSequence) { // Basic validation
+                    scheduleTimes.push({
+                        tripId,
+                        // arrivalTime,
+                        departureTime,
+                        stopId,
+                        stopSequence,
+                        shape_dist_traveled: shapeDistTraveled
+                    });
+                 }
+            }
+        }
+        return scheduleTimes;
+    } catch (error) {
+        console.error('Error loading schedule times data:', error);
+        return [];
+    }
+}
+
+
+// --- Data Processing Functions ---
+
+async function initializeDataStructure(allStopsInfo) {
+    // Populate Data.stops based on stopIDs, using loaded stop names
+    Data.stops = stopIDs.map(stopId => ({
+        stopId: stopId,
+        stopName: allStopsInfo[stopId]?.stopName || 'Unknown Stop',
+        routeShortName: '?', // Placeholder
+        routeLongName: 'Loading...', // Placeholder
+        departureAll: [],   // Will hold *filtered* schedules for today
+        nextDeparture: ['', '', '', ''], // Placeholder [past, next1, next2, next3]
+        realTime: [], // Initialize realTime array
+        trackingRealTime: [] // Initialize trackingRealTime array
+    }));
+}
+
+function calculateNextDeparture(stop) {
+    const currentTime = new Date();
+    const currentHours = currentTime.getHours();
+    const currentMinutes = currentTime.getMinutes();
+    const currentTimeInMinutes = currentHours * 60 + currentMinutes;
+
+    const filteredDepartures = []; // Holds objects: { timeInMinutes: ..., tripId: ... }
+
+    // 1. Filter departureAll based on criteria, storing time and tripId
+    if (stop.departureAll && Array.isArray(stop.departureAll)) {
+        stop.departureAll.forEach(departure => {
+            const isFirstStop = departure.stopSequence === '1';
+            const isEmptyShapeDist = departure.shape_dist_traveled === undefined ||
+                                     departure.shape_dist_traveled === null ||
+                                     departure.shape_dist_traveled === '';
+
+            if (isFirstStop && isEmptyShapeDist) {
+                if (departure.departureTime && typeof departure.departureTime === 'string') {
+                    const parts = departure.departureTime.split(':');
+                    if (parts.length >= 2) {
+                        const hours = parseInt(parts[0], 10);
+                        const minutes = parseInt(parts[1], 10);
+                        if (!isNaN(hours) && !isNaN(minutes)) {
+                            // Store object with time and tripId
+                            filteredDepartures.push({
+                                timeInMinutes: hours * 60 + minutes,
+                                tripId: departure.tripId // Store the tripId
+                            });
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Define placeholder object for empty slots
+    const placeholderDeparture = { time: '', tripId: null };
+
+    // If no departures meet criteria, fill with placeholders
+    if (filteredDepartures.length === 0) {
+        stop.nextDeparture = [placeholderDeparture, placeholderDeparture, placeholderDeparture, placeholderDeparture];
+        return;
+    }
+
+    // 2. Sort the filtered departures chronologically by time
+    filteredDepartures.sort((a, b) => a.timeInMinutes - b.timeInMinutes);
+
+    // 3. Find index of first departure >= current time
+    let firstFutureIndex = filteredDepartures.findIndex(dep => dep.timeInMinutes >= currentTimeInMinutes);
+
+    // 4. Determine the Most Recent Past Departure Object
+    let pastDepartureObject = undefined;
+    if (firstFutureIndex === -1) {
+        // All are in the past, take the last one
+        pastDepartureObject = filteredDepartures[filteredDepartures.length - 1];
+    } else if (firstFutureIndex > 0) {
+        // Take the one before the first future one
+        pastDepartureObject = filteredDepartures[firstFutureIndex - 1];
+    }
+    // If firstFutureIndex is 0, pastDepartureObject remains undefined
+
+    // 5. Determine the Next Unique Three Future Departure Objects
+    const uniqueFutureDepartureObjects = [];
+    let lastAddedFutureTime = -1; // Store only the time for comparison
+    if (firstFutureIndex !== -1) {
+        for (let i = firstFutureIndex; i < filteredDepartures.length; i++) {
+            const currentCandidate = filteredDepartures[i];
+            // Check uniqueness based on time
+            if (currentCandidate.timeInMinutes > lastAddedFutureTime) {
+                uniqueFutureDepartureObjects.push(currentCandidate); // Add the whole object
+                lastAddedFutureTime = currentCandidate.timeInMinutes; // Update last added time
+                if (uniqueFutureDepartureObjects.length === 3) break;
+            }
+        }
+    }
+
+    // 6. Format time helper for an object
+    const formatDepartureObject = (departureObj) => {
+        if (!departureObj || departureObj.timeInMinutes === undefined) {
+            return placeholderDeparture; // Return placeholder if input is invalid
+        }
+        const hours = Math.floor(departureObj.timeInMinutes / 60);
+        const minutes = departureObj.timeInMinutes % 60;
+        return {
+             time: `${hours % 24}:${minutes.toString().padStart(2, '0')}`,
+             tripId: departureObj.tripId
+        };
+    };
+
+    // 7. Assign the formatted objects to stop.nextDeparture
+    stop.nextDeparture = [
+        formatDepartureObject(pastDepartureObject),             // Past
+        formatDepartureObject(uniqueFutureDepartureObjects[0]), // Future 1
+        formatDepartureObject(uniqueFutureDepartureObjects[1]), // Future 2
+        formatDepartureObject(uniqueFutureDepartureObjects[2])  // Future 3
+    ];
+    // No need to pad further as formatDepartureObject returns placeholders
+}
+
+async function processSchedules() {
+    // **Refactored** function to load schedules/trips/routes,
+    // assign unique route info, filter schedules, and calculate departures.
+    if (!Data.serviceId || Data.serviceId.length === 0) {
+        console.warn('Service IDs not available. Schedules might be inaccurate.');
+        // Assign default 'No Service' message maybe?
+         Data.stops.forEach(stop => {
+             stop.routeLongName = 'Service Info Unavailable';
+             stop.routeShortName = '-';
+             stop.nextDeparture = ['-', '-', '-', '-'];
+         });
+         return; // Stop processing if no service IDs
+    }
+
+    // Load necessary data files
+    const [scheduleTimes, trips, routes] = await Promise.all([
+        loadScheduleTimesData(),
+        loadTripsData(),
+        loadRoutesData()
+    ]);
+
+    Data.stops.forEach(stop => {
+        // Find all schedule entries for this specific stop ID
+        const allStopSchedules = scheduleTimes.filter(schedule => schedule.stopId === stop.stopId);
+
+        // Filter these schedules to include only those running today
+        const todaysSchedules = allStopSchedules.filter(schedule => {
+            const tripDetails = trips[schedule.tripId];
+            return tripDetails && Data.serviceId.includes(tripDetails.serviceId);
+        });
+
+        // Find Route Info (once per stop) using the first schedule *running today*
+        let routeInfoFound = false;
+        if (todaysSchedules.length > 0) {
+            const firstTripDetails = trips[todaysSchedules[0].tripId];
+            if (firstTripDetails && firstTripDetails.routeId) {
+                const routeDetails = routes[firstTripDetails.routeId];
+                if (routeDetails) {
+                    stop.routeShortName = routeDetails.routeShortName || '?';
+                    stop.routeLongName = routeDetails.routeLongName || 'Unknown Route';
+                    routeInfoFound = true;
+                }
+            }
+        }
+
+        if (!routeInfoFound) {
+             // Handle cases where no schedules run today or route info is missing
+             stop.routeShortName = '-';
+             stop.routeLongName = todaysSchedules.length > 0 ? 'Route Info Missing' : 'No Service Today';
+        }
+
+        // Populate departureAll with *minimal needed data* from *today's* schedules
+        stop.departureAll = todaysSchedules.map(schedule => ({
+            departureTime: schedule.departureTime,
+            stopSequence: schedule.stopSequence,
+            shape_dist_traveled: schedule.shape_dist_traveled,
+            tripId: schedule.tripId
+        }));
+
+        // Calculate departure times based on the filtered list
+        calculateNextDeparture(stop);
+        console.log(`RT-${stop.stopId}:`, JSON.stringify(stop.realTime))
+        console.log(`SCH-${stop.stopId}:`,JSON.stringify(stop.nextDeparture))
+    });
+
+    //console.log('Stops processed with schedules and departures:', Data.stops);
+}
+
+// --- UI Population Function ---
+function populateTable() {
+    // **Updated** to use correct data structure
+    Data.lastUpdateTime = new Date().toLocaleTimeString(); // Update timestamp
+    isAnimation();
+
+    // Optional: Sort stops - might be better to sort stopIDs initially
+    Data.stops.sort((a, b) => {
+        const routeNumA = a.routeShortName === "99" ? 99 : (parseInt(a.routeShortName) || 999);
+        const routeNumB = b.routeShortName === "99" ? 99 : (parseInt(b.routeShortName) || 999);
+        if (routeNumA === routeNumB) {
+            // Optional: Secondary sort by stop name if routes are the same
+            return (a.stopName || '').localeCompare(b.stopName || '');
+        }
+        return routeNumA - routeNumB;
+    });
+
+    const tableBody = document.querySelector("#departureTable");
+    const tableBodytwo = document.querySelector("#departureTable-2");
+
+    if (!tableBody || !tableBodytwo) {
+        console.error("Table body elements not found!");
+        return;
+    }
+
+    // Clear existing content
+    tableBody.innerHTML = '';
+    tableBodytwo.innerHTML = '';
+
+    // Function to create an empty row (placeholder for unused table slots)
+    function createEmptyRowHTML() {
+        return `<tr><td class="routeInfo"> </td><td> </td><td> </td><td> </td></tr>`;
+    }
+
+    // Populate tables
+    const totalRowsPerTable = [9, 8]; // 9 in left, 8 data rows in right
+    let stopIndex = 0;
+
+    [tableBody, tableBodytwo].forEach((tbody, tableIndex) => {
+        for (let i = 0; i < totalRowsPerTable[tableIndex]; i++) {
+            if (stopIndex < Data.stops.length) {
+                const stop = Data.stops[stopIndex];
+                const row = document.createElement('tr');
+
+                // Determine the content based on the Case number
+                let nextDepartureContent1 = '';
+                if (stop.Case === 1) {
+                    nextDepartureContent1 = `
+                        <div>${stop.nextDeparture[1].time || ' '}</div>
+                        <div class="real-time-animation" style="color: ${stop.isDeparting ? 'rgb(255, 0, 0)' : 'rgb(2, 115, 157)'};">
+                                    <div class="circle circle1"></div>
+                                    <div class="circle circle2"></div>
+                                    <div class="circle circle3"></div>
+                        </div>
+                    `;
+                } else if (stop.Case === 2) {
+                    nextDepartureContent1 = `<div>${stop.lateArrival || ' '}</div>
+                     <div class="real-time-animation" style="color: ${stop.isDeparting ? 'rgb(255, 0, 0)' : 'rgb(2, 115, 157)'};">
+                                    <div class="circle circle1"></div>
+                                    <div class="circle circle2"></div>
+                                    <div class="circle circle3"></div>
+                        </div>
+                    `;
+                    
+                } else if (stop.Case === 3) {
+                    nextDepartureContent1 = `<div>${stop.nextDeparture[1].time || ' '} (s)</div>`;
+                }
+
+                let nextDepartureContent2 = '';
+                if (stop.Case === 1) {
+                    nextDepartureContent2 = `<div>${stop.nextDeparture[2].time || ' '}(s)</div>`;
+                } else if (stop.Case === 2) {
+                    nextDepartureContent2 = `<div>${stop.nextDeparture[2].time || ' '}(s)</div>`;
+                } else if (stop.Case === 3) {
+                    nextDepartureContent2 = `<div>${stop.nextDeparture[2].time || ' '} (s)</div>`;
+                }
+
+                let nextDepartureContent3 = '';
+                if (stop.Case === 1) {
+                    nextDepartureContent3 = `<div>${stop.nextDeparture[3].time || ' '}(s)</div>`;
+                } else if (stop.Case === 2) {
+                    nextDepartureContent3 = `<div>${stop.nextDeparture[3].time || ' '}(s)</div>`;
+                } else if (stop.Case === 3) {
+                    nextDepartureContent3 = `<div>${stop.nextDeparture[3].time || ' '} (s)</div>`;
+                }
+
+                row.innerHTML = `
+                    <td class="routeInfo">
+                        <div class="destination">
+                            <span class="route-badge route-${stop.routeShortName}">${stop.routeShortName || '?'}</span>
+                            ${stop.routeLongName || ''}
+                            ${stop[i]?.atPlatform ? '<img src="bus-stop.png" style="height: 30px; vertical-align: middle; margin-left: 5px;">' : ''}
+                        </div>
+                        <div class="stop_identifier">
+                            <strong><div class="stopname">${stop.stopName || ''}
+                                <span> ${Data.stops[i]?.atPlatform ? '<img src="bus-stop.png" style="height: 30px; vertical-align: middle; margin-left: 5px;position:absolute;bottom:10%;"> </span>' : ''}
+                            </div></strong>
+                            
+                        </div>
+                    </td>
+                    <td class="minutes" width="135"> <!-- Past Departure -->
+                        <div>${nextDepartureContent1}</div>
+                    </td>
+                    <td class="minutes"> <!-- Next Departure -->
+                        <div>${nextDepartureContent2}</div>
+                    </td>
+                    <td class="minutes"> <!-- Future Departure 2 -->
+                        <div>${nextDepartureContent3}</div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+                stopIndex++;
+            } else {
+                // Add empty row if no more stops but table slots remain
+                tbody.innerHTML += createEmptyRowHTML();
+            }
+        }
+    });
+
+    // Add footer to the second table
+    if (tableBodytwo) {
+        const footerRow = document.createElement('tr');
+        footerRow.className = 'footer-row';
+        footerRow.innerHTML = `
+            <td colspan="4"> <!-- Adjusted colspan if needed -->
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; flex-direction: column;">
+                        <div style="display: flex; align-items: center;">
+                            <img src="CSA-GSA-Logos.png" style="height: 40px;" alt="Logos">
+                            <div class="last-updated" style="margin-left: 10px; margin-top: 5px; font-size: 12px; color: #666;">
+                                Last updated: ${Data.lastUpdateTime}
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="display: flex; align-items: center; justify-content: flex-end; margin-bottom: 5px;">
+                            <img src="realtime.png" style="height: 15px; vertical-align: middle; margin-right: 5px;" alt="Real-time icon">
+                            <span>Real-Time data,</span>
+                            <img src="bus-stop.png" style="height:25px; vertical-align: middle; margin-left: 5px;" alt="Bus at platform icon">
+                            <span>Bus At Platform</span>
+                        </div>
+                        <div style="font-size: 12px; color: #666; text-align: right;">
+                            * Time estimates based on available data.
+                        </div>
+                    </div>
+                </div>
+            </td>
+        `;
+        tableBodytwo.appendChild(footerRow);
+    }
+}
+
+
+// --- Main Execution Flow ---
+async function initializeAndDisplay() {
+    try {
+        // Start clock updates immediately (or move inside populateTable for initial set)
+        setInterval(Data.now, 1000); // Update clock every second
+
+        // 1. Load basic static info (stop names)
+        const allStopsInfo = await loadStopsData();
+        initializeDataStructure(allStopsInfo); // Create initial stop objects
+        await fetchAndParsePB();
+
+        // 2. Determine which services are running today
+        await getTodaysServiceId();
+
+        // 3. Process schedules: Load, filter by service ID, assign route names, calculate departures
+        await processSchedules();
+
+        // 4. Populate the HTML table with the processed data
+        populateTable();
+
+        //console.log("Initialization finished successfully.");
+
+        // Optional: Setup auto-refresh for schedule data
+        // setInterval(async () => {
+        //      console.log("Refreshing schedule data...");
+        //      await processSchedules(); // Recalculate departures
+        //      populateTable();          // Update display
+        // }, 60000); // Refresh every 60 seconds
+
+
+    } catch (error) {
+        console.error("Error during initialization:", error);
+        // Display a user-friendly error message in the UI
+        const tableBody = document.querySelector("#departureTable");
+        if (tableBody) {
+            tableBody.innerHTML = `<tr><td colspan="4" style="color: red; text-align: center;">Error loading schedule data. Please try again later.</td></tr>`;
+        }
+         const clockElement = document.getElementById('header-clock');
+         if (clockElement) {
+             clockElement.textContent = "Error";
+         }
+    }
+}
+
+// --- Start the application ---
+// Use DOMContentLoaded to ensure the HTML is ready before querying elements
+document.addEventListener('DOMContentLoaded', initializeAndDisplay);
+
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // Earth's radius in meters
+    const φ1 = lat1 * Math.PI/180;
+    const φ2 = lat2 * Math.PI/180;
+    const Δφ = (lat2-lat1) * Math.PI/180;
+    const Δλ = (lon2-lon1) * Math.PI/180;
+
+    const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+    return R * c; // Distance in meters
+}
+
+// Function to check if the bus is at the platform
+function checkIfAtPlatform(stop, realTimeEntry) {
+    const vehiclePosition = realTimeEntry.vehicle ? realTimeEntry.vehicle.position : null;
+    if (vehiclePosition) {
+        const platformCoords = PLATFORM_COORDS[stop.stopId];
+        if (platformCoords) {
+            const distance = calculateDistance(vehiclePosition.latitude, vehiclePosition.longitude, platformCoords.lat, platformCoords.lon);
+            const threshold = 100; // 50 meters threshold
+            stop.atPlatform = distance <= threshold; // Set atPlatform based on distance
+        }
+    }
+}
+
+// Update the isAnimation function to check if the bus is at the platform
+// Ensure helper functions timeToMinutes, convertTimestampTo24HourFormat,
+// and checkIfAtPlatform are defined elsewhere in your script.
+
+function isAnimation() {
+    // Create an array to hold the results (as per original structure, though unused)
+    const results = [];
+
+    // Loop through each stop in Data.stops
+    Data.stops.forEach(stop => {
+        // Initialize showAnimation to false for each stop
+        stop.showAnimation = false;
+        stop.Case = 3; // Default to Case 3 (no RT data processed)
+        stop.lateArrival = null; // Clear any previous late arrival
+
+        // Check if nextDeparture exists and has at least one entry with time
+        if (stop.nextDeparture && stop.nextDeparture.length > 1 && stop.nextDeparture[1] && stop.nextDeparture[1].time) {
+            const nextDeparture = stop.nextDeparture[1]; // Get the first future scheduled entry
+            const scheduledDepartureTime = nextDeparture.time; // Get the scheduled time (HH:MM)
+            // const tripId = nextDeparture.tripId; // Keep tripId from schedule if needed for logging, but not for finding RT entry
+
+            // --- Find the realTimeEntry with the earliest arrival time ---
+            let realTimeEntry = null; // Initialize the variable to hold the result
+            let earliestArrivalTime = Infinity; // Use Infinity for easy comparison
+
+            const findEarliest = (rtArray) => {
+                if (!Array.isArray(rtArray)) return; // Safety check
+
+                rtArray.forEach(rt => {
+                    // Check for valid entry with arrival time (assuming it's a timestamp string/number)
+                    if (rt && rt.arrival && rt.arrival.time) {
+                         const currentArrivalTime = Number(rt.arrival.time); // Convert to number
+                         if (!isNaN(currentArrivalTime) && currentArrivalTime < earliestArrivalTime) {
+                             earliestArrivalTime = currentArrivalTime;
+                             realTimeEntry = rt; // Found a new earliest, store the *entire* entry
+                         }
+                    }
+                });
+            };
+
+            // 1. Search in the stop's primary realTime array
+            findEarliest(stop.realTime);
+
+            // If a realTimeEntry with the earliest arrival was found
+            if (realTimeEntry) {
+                // Get the arrival time (timestamp) from the found real-time data
+                const arrivalTime = realTimeEntry.arrival ? realTimeEntry.arrival.time : null;
+                //console.log(`Stop ${stop.stopId}: Earliest RT Arrival Time (TS):`, arrivalTime);
+
+                // Convert both times to minutes for comparison (using existing functions)
+                const arrivalTimeInMinutes = timeToMinutes(arrivalTime); // Handles timestamp -> minutes
+                const scheduledDepartureTimeInMinutes = timeToMinutes(scheduledDepartureTime); // Handles HH:MM -> minutes
+
+                // Perform the comparison if both conversions were successful
+                if (arrivalTimeInMinutes !== null && scheduledDepartureTimeInMinutes !== null) {
+                    const isEarly = arrivalTimeInMinutes <= scheduledDepartureTimeInMinutes;
+
+                    // Set showAnimation to true if the arrival is earlier or on time relative to schedule
+                    if (isEarly) {
+                        stop.showAnimation = true;
+                        stop.Case = 1;
+                    } else {
+                        // Arrival is later than scheduled departure
+                        stop.showAnimation = true; // Still show animation for late arrivals with RT data
+                        stop.Case = 2;
+                        stop.lateArrival = convertTimestampTo24HourFormat(arrivalTime); // Format and set lateArrival
+                    }
+
+                    // console.log(`Stop ${stop.stopId}: Earliest Arrival (${arrivalTimeInMinutes} min) is ${isEarly ? 'earlier/on-time' : 'later'} than Scheduled Departure (${scheduledDepartureTimeInMinutes} min)`);
+
+                } else {
+                    // Couldn't convert one or both times, default to Case 3
+                    stop.Case = 3;
+                     // console.log(`Stop ${stop.stopId}: Could not compare times. Arrival: ${arrivalTime}, Schedule: ${scheduledDepartureTime}`);
+                }
+                // Pass the found realTimeEntry to the checker function
+                checkIfAtPlatform(stop, realTimeEntry);
+
+            } else {
+                // No realTimeEntry with a valid arrival time was found after checking all sources
+                stop.Case = 3; // Explicitly set Case 3
+            }
+        } else {
+             // No valid nextDeparture data to compare against
+             stop.Case = 3; // Set Case 3 if schedule is missing
+        }
+    });
+    return results;
+}
+
+function timeToMinutes(timeString) {
+    if (!timeString) return null; // Handle null or undefined input
+
+    // Check if the input is a Unix timestamp (number)
+    const timestamp = Number(timeString);
+    if (!isNaN(timestamp)) {
+        const date = new Date(timestamp * 1000); // Convert seconds to milliseconds
+        const hours = date.getHours(); // Get hours in UTC
+        const minutes = date.getMinutes(); // Get minutes in UTC
+        return (hours * 60) + minutes; // Convert to total minutes
+    }
+
+    // If it's not a timestamp, assume it's in HH:MM format
+    const parts = timeString.split(':');
+    if (parts.length < 2) {
+        console.error(`Invalid time format: ${timeString}`); // Log invalid format
+        return null; // Invalid format
+    }
+    const hours = parseInt(parts[0], 10);
+    const minutes = parseInt(parts[1], 10);
+    if (isNaN(hours) || isNaN(minutes)) {
+        console.error(`Invalid time components: hours=${hours}, minutes=${minutes}`); // Log invalid components
+        return null; // Return null if parsing fails
+    }
+    return (hours * 60) + minutes; // Convert to total minutes
+}
+
+function formatTimeFromMinutes(totalMinutes) {
+    if (totalMinutes === null || totalMinutes < 0) return '00:00'; // Handle invalid input
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`; // Format as HH:MM
+}
+
+function convertTimestampTo24HourFormat(timestamp) {
+    if (!timestamp) return '00:00'; // Handle null or undefined input
+
+    // Convert seconds to milliseconds
+    const date = new Date(timestamp * 1000); // Assuming timestamp is in seconds
+
+    // Extract hours and minutes in local time zone
+    const hours = date.getHours(); // Get hours in local time
+    const minutes = date.getMinutes(); // Get minutes in local time
+
+    // Format hours and minutes to ensure two digits
+    const formattedHours = hours.toString().padStart(2, '0');
+    const formattedMinutes = minutes.toString().padStart(2, '0');
+
+    return `${formattedHours}:${formattedMinutes}`; // Return formatted time
+}
+
+setTimeout(function() {
+    window.location.reload();
+}, 60000);
+
+</script>
+
+</body>
+</html>

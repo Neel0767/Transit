@@ -1,0 +1,304 @@
+/* The z-index list is just to help devs figure out the z-indexs used throughout this css file. If you update or add any z-indexs in the file, please update this list as well
+z-index
+- Session Expiry Panel : 100;
+- Dialog: 80;
+- Toast: 79;
+- Bottom Sheet: 70;
+*/
+
+/* Uncomment this block to show which item currently selected/focused. This will help while testing AODA tasks*/
+/*:focus{
+  background: red !important;
+  color: green !important;
+  outline: 1px solid #13beb8 !important;
+}*/
+
+/* Material Tab Fix!! */
+/* The Angular Material Library seems to have an issue with the last  tab overflowing to the next line (hidden)
+This fix ensure that the last hidden tab doesn't WRAP to the next row.  This fixes the javascript left edge detection.
+*/
+body{
+  overflow: hidden;
+}
+.biggercontainer {
+    max-width: 1820px;
+  }
+  .table td{
+    padding: 1rem;
+    padding-left: 10px;
+  }
+	thead {
+		box-sizing: border-box; 
+		margin: 0px; 
+		position: relative; 
+		padding-top: 25px; 
+		line-height: 1.2; 
+		font-family: 'Open Sans', 'Source Sans Pro', sans-serif; 
+		font-style: normal; 
+		font-weight: 600; 
+		font-size: 24px;
+		
+	}  
+	td {
+		vertical-align: bottom
+	}
+	tr {
+		box-sizing: border-box; margin: 0px; position: relative; padding: 0px; line-height: 1.2; border-bottom: none; display: table-row;
+		
+		
+	}
+	.tdheader {
+	box-sizing: border-box;
+	margin: 0px;
+	position: relative;
+	padding: 0.1em 0.5em 0.1em 0.25em;
+	line-height: 1.2;
+	/* [disabled]background-position: 0% 60%; */
+		
+	}
+.HeaderBG {
+	background-image: url(Header-150.png);
+	background-position: 0px 0px;
+	background-size: 100% auto;
+	background-repeat: no-repeat;
+  height: 150px;
+  object-fit: cover;
+  background-position: center !important;
+}
+
+	.tdbody {
+		box-sizing: border-box; margin: 0px; position: relative; padding: 0px; line-height: 1.2; height: 1070px;
+	}
+	.stop_identifier {
+		box-sizing: border-box; margin: 0px; position: relative; padding: 0px; line-height: 1.2; letter-spacing: -0.05em; font-family: 'Open Sans', 'Source Sans Pro', sans-serif; font-style: normal; font-weight: 400; font-size: 0.65em;
+	}
+	
+	strong {
+		box-sizing: border-box; margin: 0px; font-weight: bolder; position: relative; padding: 0px; line-height: 1.2;
+	}
+	
+	.minutes {
+		box-sizing: border-box; margin: 0px; position: relative; padding: 0.1em 0px; line-height: 1.2; text-align: left; font-family: 'Open Sans', 'Source Sans Pro', sans-serif; font-style: normal; font-weight: 600; font-size: 1.2em; white-space: nowrap; align-content: center
+		
+	}
+	
+	.container {
+		width: 1900px;
+	}
+
+.real-time-animation {
+  transform: rotate(45deg);
+  transform-origin: 5% 0;
+  position: absolute;
+  top: 20%;
+  right: 50%;
+}
+
+.real-time-icon {
+  transform: rotate(45deg);
+	color: rgb(0, 188, 180);
+  font-size: 15px;
+  font-weight: 700;
+  width: 15px;
+  height: 15px;
+}
+
+.icon-hidden {
+  opacity: 0;
+}
+
+.real-time-animation .circle {
+  border-radius: 50%;
+  background: transparent;
+  border: 2px solid;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+  position: absolute;
+  opacity: 0;
+  animation: 2s infinite ease-in;
+}
+
+.no-animations .real-time-animation .circle {
+  opacity: 1 !important;
+  animation: none !important;
+}
+
+.real-time-animation .circle1 {
+  width: 20px;
+  height: 20px;
+  animation-name: circle1;
+}
+
+.real-time-animation .circle2 {
+  top: 4px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  animation-name: circle2;
+}
+
+.real-time-animation .circle3 {
+  top: 8px;
+  left: 6px;
+  width: 8px;
+  height: 8px;
+  animation-name: circle3;
+}
+
+@keyframes circle1 {
+  0%, 25%, 50%, 100% {
+    opacity: 0;
+  }
+  75% {
+    opacity: 1;
+  }
+}
+
+@keyframes circle2 {
+  0%, 25%, 100% {
+    opacity: 0;
+  }
+  50%, 75% {
+    opacity: 1;
+  }
+}
+
+@keyframes circle3 {
+  0%, 100% {
+    opacity: 0;
+  }
+  25%, 50%, 75% {
+    opacity: 1;
+  }
+}
+.thead e {
+	background-repeat: no-repeat;
+}
+.stop_name{
+  display: block;
+  font-size: 11px !important;
+  padding-top: 4px;
+  font-weight: 400 !important;
+}
+.route_name{
+  font-weight: 600;
+}
+.departureTable, .departureTable-2{
+  max-width: 50%;
+}
+.bodyParent{
+  display: flex;
+}
+.table-container {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+.table-half {
+  flex: 1;
+}
+.header-title {
+  font-size: 48px;
+  font-weight: bold;
+  color: white;
+  text-align: center;
+  line-height: 1.1;
+  margin-bottom: 0;
+}
+.header-subtitle {
+  font-size: 24px;
+  color: white;
+  text-align: center;
+}
+.logo-container {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.table {
+  margin-bottom: 0;
+}
+.header-table {
+  margin-bottom: 4px;
+}
+.routeInfo{
+  width: 50%;
+  font-size: 1.2rem;
+}
+.footer-row td {
+  border-top: 2px solid #dee2e6;
+}
+.destination{
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.stopname{
+  font-size: 14px;
+  font-weight: 400;
+  margin-left: 46px;
+}
+.last-updated{
+  font-size: 12px;
+  color: #000;
+  margin-top: 5px;
+  margin-left: 15px;
+  font-weight: 600;
+}
+
+.route-badge {
+  background-color: #007C41; 
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 16px; 
+  margin-right: 10px;
+  min-width: 18px; 
+  text-align: center;
+  display: inline-block; 
+  line-height: 1.2; 
+}
+
+.route-1{
+  background-color: #ec008c;
+}
+.route-2{
+  background-color: #ec008c;
+}
+.route-5{
+  background-color: #921B1E;
+}
+.route-6{
+  background-color: #ED1C24
+}
+.route-7{
+  background-color: #682C91;
+}
+.route-15{
+  background-color: #8F7140;
+}
+.route-17{
+  background-color: #bf5900;
+}
+.route-18{
+  background-color: #bf5900;
+}
+.route-99{
+  background-color: #4F832E;
+}
+[class="route-badge route-50 U"] {
+  background-color: #A54686;
+}
+[class="route-badge route-52 U"] {
+  background-color: #174F87;
+}
+[class="route-badge route-56 U"] {
+  background-color: #ED1C24;
+}
+[class="route-badge route-58 U"] {
+  background-color: #91469b;
+}
+.routeInfo{
+  padding-left: 25px !important;
+}

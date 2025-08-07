@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package transit_realtime;
+
+message TripDescriptor {
+  string trip_id = 1;
+  string route_id = 2;
+  string start_time = 3;
+  string start_date = 4;
+}
+
+message StopTimeEvent {
+  int64 time = 1;  // UNIX timestamp for arrival/departure
+  int32 delay = 2; // Delay in seconds (optional)
+}
+
+message StopTimeUpdate {
+  int32 stop_sequence = 1;
+  string stop_id = 2;
+  StopTimeEvent arrival = 3;
+  StopTimeEvent departure = 4;
+}
+
+message TripUpdate {
+  TripDescriptor trip = 1;
+  repeated StopTimeUpdate stop_time_update = 2;
+  uint64 timestamp = 3;  // When the update was recorded
+}
+
+message FeedHeader {
+  string gtfs_realtime_version = 1;
+  int32 incrementality = 2;
+  uint64 timestamp = 3;
+}
+
+message FeedMessage {
+  FeedHeader header = 1;
+  repeated TripUpdate entity = 2;
+}
